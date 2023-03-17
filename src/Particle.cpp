@@ -1,0 +1,2 @@
+#define PARTICLE_SIZE 0.005
+
