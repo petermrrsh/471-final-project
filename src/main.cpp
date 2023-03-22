@@ -22,16 +22,17 @@
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
+#define PARTICLE_SIZE 0.045
 
-#define CYLENDER_BOXTYPE
-#define SPHERE_BOXTYPE
-#define CUBE_BOXTYPE
+
+#define X 0
+#define Y 1
+#define Z 2
 
 using namespace std;
 using namespace glm;
 
 const float TO_RAD = M_PI / 180;
-
 
 double get_last_elapsed_time()
 {
@@ -42,10 +43,122 @@ double get_last_elapsed_time()
 	return difference;
 }
 
+enum BodyType {
+	STATIONARY = 0,
+	MOVING = 1
+};
+
 class Body {
-	int mass;
-	vec3 velocity;
-	vec3 rotation;
+	public:
+		int mass;
+		vec3 velocity;
+		vec3 rotational_velocity;
+		vec3 rotation;
+		vec3 center_of_mass;
+
+		GLuint particlesID;
+		GLfloat *particles;
+		BodyType type;
+		vec3 getNewPos(vec3 new_rot, vec3 velocity_transform, vec3 last_pos) {
+			vec3 center_vec = last_pos - center_of_mass;
+			//cout << center_vec.x << ", " << center_vec.y << ", " << center_vec.z << endl;
+
+			//mat4 Initial_Trans = glm::translate(glm::mat4(1.0f), -last_pos);
+			mat4 RotX = glm::rotate( glm::mat4(1.0f), new_rot.x * TO_RAD, vec3(1, 0, 0));
+			mat4 RotY = glm::rotate( glm::mat4(1.0f), new_rot.y * TO_RAD, vec3(0, 1, 0));
+			mat4 RotZ = glm::rotate ( glm::mat4(1.0f), new_rot.z * TO_RAD, vec3(0, 0, 1));
+			//mat4 Final_Trans = glm::translate(glm::mat4(1), last_pos);
+
+			mat4 RotationMatrix = RotX * RotY * RotZ;
+			vec4 rotation_vec = vec4(center_vec, 1.0f) * RotationMatrix;
+			return center_of_mass + vec3(rotation_vec) + velocity_transform;
+		}
+
+		void updatePos(float frametime) {
+			vec3 new_rotation = rotational_velocity * frametime;
+			vec3 velocity_transform = velocity * frametime;
+
+			rotation += new_rotation;
+			// for every particle
+			for (int i = 0; i < mass * 3; i += 3) {
+
+				vec3 last_pos = vec3(particles[i + X], particles[i + Y], particles[i + Z]);
+				
+				
+				
+				// get rotation about the center_of_mass
+
+				vec3 new_pos = getNewPos(new_rotation, velocity_transform, last_pos);
+				
+				// update particle X, Y, Z based on how much time went by
+				// particles[i + X] += velocity.x * frametime;
+				// particles[i + Y] += velocity.y * frametime;
+				// particles[i + Z] += velocity.z * frametime;
+
+				particles[i + X] = new_pos.x;
+				particles[i + Y] = new_pos.y;
+				particles[i + Z] = new_pos.z;
+			}
+
+			center_of_mass += velocity_transform;
+		}
+		void checkCollision(Body b2) {
+			// if (type == STATIONARY) {
+			// 	cout << "Error: checkCollision called on a Stationary body" << endl;
+			// 	exit(1);
+			// }
+			for (int i = 0; i < mass; i++) {
+				for (int j = 0; j < b2.mass; j++) {
+					vec3 p = vec3(particles[i*3 + X], particles[i*3 + Y], particles[i*3 + Z]);
+					vec3 p2 = vec3(b2.particles[j*3 + X], b2.particles[j*3 + Y], b2.particles[j*3 + Z]);
+
+					float dist = distance(p, p2);
+					if (dist <= PARTICLE_SIZE) {
+						
+						// normal vector pointed from p2 to p
+						vec3 normal = normalize(p - p2);
+						
+						if (b2.type == MOVING) {
+
+							vec3 relativeVelocity = velocity - b2.velocity;
+							float dot_product = dot(relativeVelocity, normal);
+							velocity -= dot_product * normal;
+							b2.velocity += dot_product * normal;
+
+						} else {
+			// 				// TODO: check the physics here
+
+							//velocity -= 2 * dot(velocity, normal) * normal;
+							
+
+
+							vec3 relativeVelocity = velocity - b2.velocity;
+							float parallel_velocity_of_collision = dot(relativeVelocity, normal);
+							vec3 orthagonal_velocity_of_collision = cross(relativeVelocity, normal);
+
+							// calculate change in velocity
+							velocity -= 2 * parallel_velocity_of_collision * normal;
+
+							// calculate change in rotational velocity
+							rotational_velocity = -1000.0f * orthagonal_velocity_of_collision;
+							cout << "rotational_velocity = " << orthagonal_velocity_of_collision.x << ", " << orthagonal_velocity_of_collision.y << ", " << orthagonal_velocity_of_collision.z << endl;
+
+						}
+
+						//set this particle outside the bounds of particle p (no duplicate collisions)
+						vec3 offset = 1.05f * (float)(PARTICLE_SIZE - abs(dist)) * normal;
+						center_of_mass += offset;
+						for (int t = 0; t < mass * 3; t += 3) {
+							particles[t + X] += offset.x;
+							particles[t + Y] += offset.y;
+							particles[t + Z] += offset.z;
+						}
+					}
+
+				}
+			}
+		}
+
 };
 
 
@@ -107,24 +220,15 @@ public:
 
 camera mycam;
 
-#define PARTICLE_SIZE 0.045
-
-enum ParticleType {
-	STATIONARY = 0,
-	MOVING = 1
-};
-
-class Particle {
+/*class Particle {
 	public:
 		vec3 pos;
 		vec3 velocity;
 		vector<Particle> bonds;
 		vec3 bondVelocity = vec3(0);
-		ParticleType type;
-		Particle(vec3 init_pos, vec3 init_v, ParticleType t = MOVING) {
+		Particle(vec3 init_pos, vec3 init_v) {
 			pos = init_pos;
 			velocity = init_v;
-			type = t;
 		}
 		void checkCollision(Particle &p) {
 			if (type == STATIONARY) {
@@ -170,24 +274,7 @@ class Particle {
 			// }
 			
 		}
-};
-
-class ParticleSorter {
-public:
-   bool operator()(Particle &p0, Particle &p1) 
-   {
-      // Particle positions in world space
-      const vec3 x0 = p0.pos;
-      const vec3 x1 = p1.pos;
-      // Particle positions in camera space
-      vec4 x0w = C * vec4(x0.x, x0.y, x0.z, 1.0f);
-      vec4 x1w = C * vec4(x1.x, x1.y, x1.z, 1.0f);
-      return x0w.z < x1w.z;
-   }
-  
-   mat4 C; // current camera matrix
-};
-ParticleSorter sorter;
+};*/
 
 class BoundingBox
 {
@@ -372,6 +459,8 @@ public:
 	GLfloat boxParticles;
 	GLfloat netParticles;
 
+	Body cubeBody, ropeBody;
+
 	int g_GiboLen;
 	//ground VAO
 	GLuint GroundVertexArrayID;
@@ -382,8 +471,8 @@ public:
 	shared_ptr<Texture> texture2;
 	shared_ptr<Texture> texture3, underwater_tex;
 
-	vector<Particle> cubeParticles;
-	vector<Particle> ropeParticles;
+	//vector<Particle> cubeParticles;
+	//vector<Particle> ropeParticles;
 
 	Spline splinepath[2];
 	vec3 g_eye = vec3(0, 1, 0);
@@ -465,8 +554,8 @@ public:
 		if (key == GLFW_KEY_G && action == GLFW_PRESS)
 		{
 			g_pressed = true;
-			goCamera = true;
-			initSplinePath();
+			//goCamera = true;
+			//initSplinePath();
 		}
 	}
 
@@ -600,18 +689,6 @@ public:
 		splinepath[1] = Spline(glm::vec3(1, 0, -1.5), glm::vec3(1,0.05,-1.8), glm::vec3(1, 0.1, -2.2), glm::vec3(1,0.25,-2.3), 5);
 	}
 
-	void initParticles() {
-
-
-		ropeParticles = generateParticleGrid(vec3(0,0,-2), 7, 2);
-		cubeParticles = generateCubeParticles(vec3(0,0,-1), vec3(0, 0, -0.2), 8);
-
-		glGenBuffers(1, &pointsBuf);
-		glBindBuffer(GL_ARRAY_BUFFER, pointsBuf);
-
-		
-	}
-
 	void initGeom(const std::string& resourceDirectory)
 	{
 		//EXAMPLE set up to read one shape from one obj file - convert to read several
@@ -631,104 +708,10 @@ public:
 		bunnyNoNorm.load(resourceDirectory + "/bunnyNoNorm.obj");
 		icoNoNorm.load(resourceDirectory + "/icoNoNormals.obj");
 
+		generateRopeBody(ropeBody, vec3(0,0,-2), 7, 8);
+		generateCubeBody(cubeBody, vec3(-0.15,0,-1), vec3(0, 0, -0.2), 8);
 
-		//code to load in the ground plane (CPU defined data passed to GPU)
-		initGround();
-		initParticles();
-
-		
-
-		// Particle p1 = Particle(vec3(-0.5,0,-1), vec3(0.1, 0, 0));
-		// Particle p2 = Particle(vec3(0.5,0,-1), vec3(0, 0, 0), STATIONARY);
-		// //Particle p3 = Particle(vec3(0.5,-PARTICLE_SIZE,-1), vec3(-0.1, 0, 0));
-
-
-		// particles.push_back(p1);
-		// particles.push_back(p2);
-		//particles.push_back(p3);
 	}
-
-	//directly pass quad for the ground to the GPU
-	void initGround() {
-
-		float g_groundSize = 20;
-		float g_groundY = -0.25;
-
-  		// A x-z plane at y = g_groundY of dimension [-g_groundSize, g_groundSize]^2
-		float GrndPos[] = {
-			-g_groundSize, g_groundY, -g_groundSize,
-			-g_groundSize, g_groundY,  g_groundSize,
-			g_groundSize, g_groundY,  g_groundSize,
-			g_groundSize, g_groundY, -g_groundSize
-		};
-
-		float GrndNorm[] = {
-			0, 1, 0,
-			0, 1, 0,
-			0, 1, 0,
-			0, 1, 0,
-			0, 1, 0,
-			0, 1, 0
-		};
-
-		static GLfloat GrndTex[] = {
-      		0, 0, // back
-      		0, 1,
-      		1, 1,
-      		1, 0 };
-
-      	unsigned short idx[] = {0, 1, 2, 0, 2, 3};
-
-		//generate the ground VAO
-      	glGenVertexArrays(1, &GroundVertexArrayID);
-      	glBindVertexArray(GroundVertexArrayID);
-
-      	g_GiboLen = 6;
-      	glGenBuffers(1, &GrndBuffObj);
-      	glBindBuffer(GL_ARRAY_BUFFER, GrndBuffObj);
-      	glBufferData(GL_ARRAY_BUFFER, sizeof(GrndPos), GrndPos, GL_STATIC_DRAW);
-
-      	glGenBuffers(1, &GrndNorBuffObj);
-      	glBindBuffer(GL_ARRAY_BUFFER, GrndNorBuffObj);
-      	glBufferData(GL_ARRAY_BUFFER, sizeof(GrndNorm), GrndNorm, GL_STATIC_DRAW);
-
-      	glGenBuffers(1, &GrndTexBuffObj);
-      	glBindBuffer(GL_ARRAY_BUFFER, GrndTexBuffObj);
-      	glBufferData(GL_ARRAY_BUFFER, sizeof(GrndTex), GrndTex, GL_STATIC_DRAW);
-
-      	glGenBuffers(1, &GIndxBuffObj);
-     	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, GIndxBuffObj);
-      	glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(idx), idx, GL_STATIC_DRAW);
-      }
-
-      //code to draw the ground plane
-     void drawGround(shared_ptr<Program> curS) {
-     	curS->bind();
-     	glBindVertexArray(GroundVertexArrayID);
-     	
-		//draw the ground plane 
-  		SetModel(vec3(0, -1, 0), 0, 0, 1, curS);
-  		glEnableVertexAttribArray(0);
-  		glBindBuffer(GL_ARRAY_BUFFER, GrndBuffObj);
-  		glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, 0);
-
-  		glEnableVertexAttribArray(1);
-  		glBindBuffer(GL_ARRAY_BUFFER, GrndNorBuffObj);
-  		glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 0, 0);
-
-  		glEnableVertexAttribArray(2);
-  		glBindBuffer(GL_ARRAY_BUFFER, GrndTexBuffObj);
-  		glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 0, 0);
-
-   		// draw!
-  		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, GIndxBuffObj);
-  		glDrawElements(GL_TRIANGLES, g_GiboLen, GL_UNSIGNED_SHORT, 0);
-
-  		glDisableVertexAttribArray(0);
-  		glDisableVertexAttribArray(1);
-  		glDisableVertexAttribArray(2);
-  		curS->unbind();
-     }
 
      //helper function to pass material data to the GPU
 	void SetMaterial(shared_ptr<Program> curS, int i) {
@@ -790,119 +773,82 @@ public:
 		}
    	}
 
-   	
-	bool collision(vector<BoundingBox> boxes1, vector<BoundingBox> boxes2) {
-		for (int i = 0; i < boxes1.size(); i++) {
-			BoundingBox box1 = boxes1[i];
-			for (int j = 0; j < boxes2.size(); j++) {
-				BoundingBox box2 = boxes2[j];
-
-				bool collisionX = box1.max.x >= box2.min.x && box2.max.x >= box1.min.x;
-				bool collisionY = box1.max.y >= box2.min.y && box2.max.y >= box1.min.y;
-				bool collisionZ = box1.max.z >= box2.min.z && box2.max.z >= box1.min.z;
-
-				if (collisionX && collisionY && collisionZ) {
-					return true;
-				}
-			}
+	vec3 getCenterOfMass(vector<vec3> particles) {
+		vec3 aggregate = vec3(0);
+		for (int i = 0; i < particles.size(); i++) {
+			aggregate += particles[i];
 		}
-		return false;
+		return (1.0f / particles.size()) * aggregate;
 	}
 
-	void visualizeBoundingBox(std::shared_ptr<Program> prog, vector<BoundingBox> boxes) {
-		glUniform1f(prog->getUniform("alpha"), 0.3f);
-		for (int i = 0; i < boxes.size(); i++) {
-			glUniform1f(prog->getUniform("alpha"), 0.3f);
-			BoundingBox box = boxes[i];
-			cube.setModel(prog, box.min, 0, 0, 0, (box.max-box.min)*(1.0f/1.1547f), true);
-			cube.draw(prog);
-			
-			glUniform1f(prog->getUniform("alpha"), 1.0f);
-			// cube.setModel(prog, box.max, 0, 0, 0, 0.01, true);
-			// cube.draw(prog);
-			// cube.setModel(prog, box.min, 0, 0, 0, 0.01, true);
-			// cube.draw(prog);
-		}
+	void generateRopeBody(Body &body, vec3 pos, int grid_spacing, int grid_size) {
+
+		// const float z_pos = pos.z;
+		// const float x_min = pos.x + -0.5 * (grid_size * grid_spacing + 1) * PARTICLE_SIZE;
+		// const float y_min = pos.y + -0.5 * (grid_size * grid_spacing + 1) * PARTICLE_SIZE;
+
+		vector<vec3> particles;
+		// for (int x = 0; x <= grid_size * grid_spacing; x++) {
+		// 	for (int y = 0; y <= grid_size * grid_spacing; y++) {
+		// 		float x_pos = x_min + (x + 0.5) * PARTICLE_SIZE;
+		// 		float y_pos = y_min + (y + 0.5) * PARTICLE_SIZE;
+		// 		if (x % grid_spacing == 0 || y % grid_spacing == 0) {
+		// 			particles.push_back(vec3(x_pos, y_pos, z_pos));
+		// 		}
+		// 	}
+		// }
+		particles.push_back(pos);
+
+		body.mass = particles.size();
+		body.velocity = vec3(0);
+		body.particles = getParticleBuf(particles);
+		body.type = STATIONARY;
+		body.center_of_mass = getCenterOfMass(particles);
+		body.rotational_velocity = vec3(0);
+		body.rotation = vec3(0);
+		glGenBuffers(1, &body.particlesID);
+		glBindBuffer(GL_ARRAY_BUFFER, body.particlesID);
+		glBufferData(GL_ARRAY_BUFFER, sizeof(GLfloat) * particles.size() * 3, NULL, GL_STREAM_DRAW);
+		glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(GLfloat) * particles.size() * 3, body.particles);
 	}
 
-	vector<Particle> generateParticleGrid(vec3 pos, int grid_spacing, int grid_size) {
-		const float z_pos = pos.z;
-		const float x_min = pos.x + -0.5 * (grid_size * grid_spacing + 1) * PARTICLE_SIZE;
-		const float y_min = pos.y + -0.5 * (grid_size * grid_spacing + 1) * PARTICLE_SIZE;
+	void generateCubeBody(Body &body, vec3 pos, vec3 velocity, int size) {
 
-		vector<Particle> particles;
-		for (int x = 0; x <= grid_size * grid_spacing; x++) {
-			for (int y = 0; y <= grid_size * grid_spacing; y++) {
-				float x_pos = x_min + (x + 0.5) * PARTICLE_SIZE;
-				float y_pos = y_min + (y + 0.5) * PARTICLE_SIZE;
-				if (x % grid_spacing == 0 || y % grid_spacing == 0) {
-					particles.push_back(Particle(vec3(x_pos, y_pos, z_pos), vec3(0), STATIONARY));
-				}
-			}
-		}
-		return particles;
-	}
-
-	#define CUBE_PARTICLE_SIZE (PARTICLE_SIZE - 0.001)
-
-	vector<Particle> generateCubeParticles(vec3 pos, vec3 velocity, int size) {
 		float x_min = pos.x - (0.5 * (size - 0.5) * PARTICLE_SIZE);
 		float y_min = pos.y - (0.5 * (size - 0.5) * PARTICLE_SIZE);
 		float z_min = pos.z - (0.5 * (size - 0.5) * PARTICLE_SIZE);
 
-		vector<Particle> particles;
-		// particles: [x0y0z0, x0y0z1, x0y0z2, x0y1z0, x0y1z1, x0y1z2 ...]
+		vector<vec3> particles;
+
 		for (int x = 0; x < size; x++) {
 			for (int y = 0; y < size; y++) {
 				for (int z = 0; z < size; z++) {
 					float x_pos = x_min + x * PARTICLE_SIZE;
 					float y_pos = y_min + y * PARTICLE_SIZE;
 					float z_pos = z_min + z * PARTICLE_SIZE;
-					Particle p = Particle(vec3(x_pos, y_pos, z_pos), velocity);
-					particles.push_back(p);
-
-					
-					/*// add bond to particle to the negative x of you
-					int index = ((x-1) * size * size) + (y * size) + (z);
-					if (index >= 0) {
-						p.addBond(particles[index]);
-						particles[index].addBond(p);
-					}
-					// add bond to particle to the negative y of you
-					index = (x * size * size) + ((y-1) * size) + (z);
-					if (index >= 0) {
-						p.addBond(particles[index]);
-						particles[index].addBond(p);
-					}
-					
-					// add bond to particle to the negative z of you
-					index = (x * size * size) + (y * size) + (z-1);
-					if (index >= 0) {
-						p.addBond(particles[index]);
-						particles[index].addBond(p);
-					}*/
-					
-					
-
-
+					particles.push_back(vec3(x_pos, y_pos, z_pos));
 				}
 			}
 		}
-		return particles;
-	}
 
-	Particle *particleRef(int index) {
-		if (index < cubeParticles.size()) {
-			return &cubeParticles[index];
-		} 
-		return &ropeParticles[index - cubeParticles.size()];
+		body.mass = particles.size();
+		body.velocity = velocity;
+		body.particles = getParticleBuf(particles);
+		body.type = MOVING;
+		body.center_of_mass = getCenterOfMass(particles);
+		body.rotational_velocity = vec3(0);
+		body.rotation = vec3(0);
+		glGenBuffers(1, &body.particlesID);
+		glBindBuffer(GL_ARRAY_BUFFER, body.particlesID);
+		glBufferData(GL_ARRAY_BUFFER, sizeof(GLfloat) * particles.size() * 3, NULL, GL_STREAM_DRAW);
+		glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(GLfloat) * particles.size() * 3, body.particles);
 	}
 
 	void render() {
 
 		if (g_pressed) {
 			g_pressed = false;
-			initParticles();
+			generateCubeBody(cubeBody, vec3(0,0,-1), vec3(0, 0, -0.2), 8);
 		}
 
 		double frametime = get_last_elapsed_time();
@@ -966,8 +912,8 @@ public:
 		glUniform1i(texProg->getUniform("shade"), 1);
 		
 		texture0->bind(texProg->getUniform("Texture0"));
-		rope.addInstance(vec3(0.01,0,-1), vec3(-90, 90, 0), vec3(1));
-		rope.drawAll(texProg);
+		//rope.addInstance(vec3(0.01,0,-1), vec3(-90, 90, 0), vec3(1));
+		//rope.drawAll(texProg);
 
 
 		//texture2->bind(texProg->getUniform("Texture0"));
@@ -988,94 +934,56 @@ public:
 
 
 		
-		for (int i = 0; i < cubeParticles.size() + ropeParticles.size(); i++) {
-			for (int j = i+1; j < cubeParticles.size() + ropeParticles.size(); j++) {
-				particleRef(i)->checkCollision(*particleRef(j));
-			}
-			if (i < cubeParticles.size()) {
-				cubeParticles[i].updatePos(frametime);
-			}
-		}
+		// for (int i = 0; i < cubeParticles.size() + ropeParticles.size(); i++) {
+		// 	for (int j = i+1; j < cubeParticles.size() + ropeParticles.size(); j++) {
+		// 		particleRef(i)->checkCollision(*particleRef(j));
+		// 	}
+		// 	if (i < cubeParticles.size()) {
+		// 		cubeParticles[i].updatePos(frametime);
+		// 	}
+		// }
 
-		drawParticleInstances();
-		
-
-
-
-
-
-		/*static int ticker = 0;
-		if (ticker % 5 == 0) {
-
-			float x_min = -1.0;
-			float x_max = 1.0;
-			float y_min = -1.0;
-			float y_max = 1.0;
-			float rand_x = x_min + static_cast <float> (rand()) /( static_cast <float> (RAND_MAX/(x_max-x_min)));
-			float rand_y = y_min + static_cast <float> (rand()) /( static_cast <float> (RAND_MAX/(y_max-y_min)));
-
-			sphere.addInstance(vec3(rand_x,rand_y,1), vec3(0,0,0), vec3(0.1));
-		}
-		ticker += 1;
-		int numInstances = sphere.instances.size();
-		int i = 0;
-		while (i < numInstances) {
-			
-			if (!collision(sphere.getBoundingBoxes(prog, i), rope.getBoundingBoxes(prog, 0))) {
-				sphere.instances[i].pos = sphere.instances[i].pos + vec3(0,0,-current*frametime);
-			} else {
-				float x_min = -0.02;
-				float x_max = 0.02;
-				float y_min = -0.02;
-				float y_max = 0.02;
-				float rand_x = x_min + static_cast <float> (rand()) /( static_cast <float> (RAND_MAX/(x_max-x_min)));
-				float rand_y = y_min + static_cast <float> (rand()) /( static_cast <float> (RAND_MAX/(y_max-y_min)));
-				sphere.instances[i].pos = sphere.instances[i].pos + vec3(rand_x,rand_y,0);
-			}
-
-			if (sphere.instances[i].pos.z < -4.0) {
-				sphere.removeInstance(i);
-				numInstances = sphere.instances.size();
-			} else {
-				i++;
-			}
-		}
-		sphere.drawAll(prog);*/
+		cubeBody.checkCollision(ropeBody);
+		//cubeBody.velocity += (float)frametime * vec3(0,0,-0.05);
+		sphere.setModel(prog, cubeBody.center_of_mass, 0,0,0, PARTICLE_SIZE);
+		sphere.draw(prog);
+		cubeBody.updatePos(frametime);
+		drawParticles(cubeBody);
+		drawParticles(ropeBody);
 
 		prog->unbind();
 
 	}
 
-	void getParticleBuf(GLfloat *points) {
-		
-		vec3 pos;
+	GLfloat *getParticleBuf(vector<vec3> particle_vector) {
+		GLfloat *particleBuf = (GLfloat *) malloc(sizeof(GLfloat) * particle_vector.size() * 3);
+		if (particleBuf == NULL) {
+			cout << "Malloc Error" << endl;
+			exit(1);
+		}
 
-		for (int i = 0; i < cubeParticles.size(); i++) {
-			pos = cubeParticles[i].pos;
-			points[i*3+0] =pos.x; 
-			points[i*3+1] =pos.y; 
-			points[i*3+2] =pos.z; 
+		vec3 pos;
+		for (int i = 0; i < particle_vector.size(); i++) {
+			pos = particle_vector[i];
+			particleBuf[i*3+0] = pos.x; 
+			particleBuf[i*3+1] = pos.y; 
+			particleBuf[i*3+2] = pos.z; 
 				
 		} 
+		return particleBuf;
 	}
 
-	void drawParticleInstances() {
+	void drawParticles(Body &body) {
 
-		//sorter.C = mycam.cameraMatrix;
-		//sort(cubeParticles.begin(), cubeParticles.end(), sorter);
-
-		GLfloat points[cubeParticles.size()*3];
-		getParticleBuf(points);
-		unsigned long points_size = sizeof(GLfloat) * cubeParticles.size() * 3;
-
-		glBindBuffer(GL_ARRAY_BUFFER, pointsBuf);
-		glBufferData(GL_ARRAY_BUFFER, points_size, NULL, GL_STREAM_DRAW);
-		glBufferSubData(GL_ARRAY_BUFFER, 0, points_size, points);
+		unsigned int buf_size = body.mass * 3 * sizeof(GLfloat);
+		glBindBuffer(GL_ARRAY_BUFFER, body.particlesID);
+		glBufferData(GL_ARRAY_BUFFER, buf_size, NULL, GL_STREAM_DRAW);
+		glBufferSubData(GL_ARRAY_BUFFER, 0, buf_size, body.particles);
 		
 		glBindBuffer(GL_ARRAY_BUFFER, 0);
 
 		sphere.setModel(prog, vec3(0), 0, 0, 0, PARTICLE_SIZE / 1.13);
-		sphere.drawInstances(prog, pointsBuf, cubeParticles.size());
+		sphere.drawInstances(prog, body.particlesID, body.mass);
 
 	}
 
